@@ -19,10 +19,10 @@
     }
 
 
-   linQuery.prototype.init.prototype = linQuery.prototype;  // 
+   linQuery.prototype.init.prototype = linQuery.prototype;  
    window.$ = window.linQuery = linQuery;  // 在window下定义$
 })(window);
 
 
-var a = $("xixi");
+var a = $("lin");
 a.logName();
