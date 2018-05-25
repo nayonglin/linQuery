@@ -6,9 +6,6 @@
         return new linQuery.prototype.init(name);
     };
 
-    
-
-   
 
     linQuery.fn = linQuery.prototype = {
         constructor: linQuery,
@@ -29,4 +26,3 @@
 
 var a = $("xixi");
 a.logName();
-$.Callbacks();
