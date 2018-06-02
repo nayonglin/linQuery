@@ -38,7 +38,7 @@ var
 	core_hasOwn = Object.prototype.hasOwnProperty,
 	core_trim = String.prototype.trim,
 
-	// Define a local copy of jQuery
+	// Define a local copy of jQueryf
 	jQuery = function( selector, context ) {
 		// The jQuery object is actually just the init constructor 'enhanced'
 		return new jQuery.fn.init( selector, context, rootjQuery );
@@ -1010,7 +1010,7 @@ jQuery.Callbacks = function( options ) {
 						});
 					})( arguments );
 					// Do we need to add the callbacks to the
-					// current firing batch?
+					// current firing ?
 					if ( firing ) {
 						firingLength = list.length;
 					// With memory, if we're not firing then
