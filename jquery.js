@@ -1159,13 +1159,13 @@ jQuery.extend({
 				stateString = tuple[ 3 ];
 
 			// promise[ done | fail | progress ] = list.add
-			promise[ tuple[1] ] = list.add;
+			promise[ tuple[1] ] = list.add;  // doen,fail,progress其实就是调用了Calllbacks的add方法，加入到对应的队列
 
 			// Handle state
 			if ( stateString ) {
 				list.add(function() {
 					// state = [ resolved | rejected ]
-					state = stateString;
+					state = stateString;  // 对应Callbacks插入状态变换的方法，比如说fail加入state = rejected
 
 				// [ reject_list | resolve_list ].disable; progress_list.lock
 				}, tuples[ i ^ 1 ][ 2 ].disable, tuples[ 2 ][ 2 ].lock );

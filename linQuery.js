@@ -7,9 +7,15 @@
 
     var
 
-        core_toString = Object.prototype.toString;
-    core_hasOwn = Object.prototype.hasOwnProperty,
+
+        // 在写入linQuery之前保存之前已经写入的$
+        _$ = window.$,
+        _linQuery = window.linQuery,
+
+        core_toString = Object.prototype.toString,
+        core_hasOwn = Object.prototype.hasOwnProperty,
         core_indexOf = Array.prototype.indexOf,
+        core_slice = Array.prototype.slice,
 
         // 匹配一个非空白字符
         core_rnotwhite = /\S/,
@@ -83,14 +89,14 @@
             self = {
                 // 增加一个回调或者回调的集合
                 add: function () {
-    
+
                     if (list) {
                         // 保存长度
                         var start = list.length;
                         (function add(args) {
-                          
+
                             linQuery.each(args, function (_, arg) {
-     
+
                                 var type = linQuery.type(arg);
                                 if (type === "function") {
                                     if (!options.unique || !self.has(arg)) {
@@ -188,7 +194,7 @@
                 }
             };
         return self;
-    }
+    };
 
 
 
@@ -259,6 +265,16 @@
 
     // 添加一些常用的辅助方法
     linQuery.extend({
+        noConflict: function () {
+            if (window.$ === linQuery) {
+                window.$ = _$;
+            }
+            if (deep && window.linQuery === linQuery) {
+                window.linQuery = _linQuery;
+            }
+
+            return linQuery;
+        },
         isFunction: function (obj) {
             return linQuery.type(obj) === "function";
         },
@@ -371,6 +387,194 @@
 
     });
 
+    linQuery.extend({
+        Deferred: function (func) {
+            var deferred = {},
+                tuples = [
+                    ["resolve", "done", linQuery.Callbacks("once memory"), "resolved"],
+                    ["reject", "fail", linQuery.Callbacks("once memory"), "rejected"],
+                    ["notify", "progress", linQuery.Callbacks("memory")]
+                ],
+                state = "pending",
+                promise = {
+                    // 获取当前队列的状态
+                    state: function () {
+                        return state;
+                    },
+                    // 无论成功还是失败都会执行，其实也就是给done和fail队列都添加传入的方法
+                    always: function () {
+                        deferred.done(arguments).fail(arguments);
+                        return this;
+                    },
+                    // 同时添加done,fail,progress
+                    then: function () {
+                        // fns = [fnDone, fnFail, fnProgress]
+                        var fns = arguments;
+
+                        //这里return linQuery.Deferred(function( newDefer ) {}).promise();
+                        //为何还要使用linQuery.Deferred来包装
+                        //就then比较特殊需要重新调promise方法来屏蔽resolve|reject|notify这些接口？
+                        return linQuery.Deferred(function (newDefer) {
+
+                            linQuery.each(tuples, function (i, tuple) {
+
+                                //action = [resolve | reject | notify]
+                                var action = tuple[0],
+                                    //分别对应fnDone, fnFail, fnProgress
+                                    fn = fns[i];
+
+                                //为何这里不能直接：deferred[ tuple[1] ](fn)
+
+                                // deferred[ done | fail | progress ] for forwarding actions to newDefer
+                                // tuple[1] = [ done | fail | progress ]
+                                deferred[tuple[1]](linQuery.isFunction(fn) ?
+                                    function () {
+                                        //当前的this == deferred
+                                        var returned = fn.apply(this, arguments);
+
+                                        //如果回调返回的是一个Deferred实例
+                                        if (returned && linQuery.isFunction(returned.promise)) {
+                                            //则继续派发事件
+                                            returned.promise()
+                                                .done(newDefer.resolve)
+                                                .fail(newDefer.reject)
+                                                .progress(newDefer.notify);
+                                        }
+                                        //如果回调返回的是不是一个Deferred实例，则被当做args由XXXWith派发出去
+                                        else {
+                                            newDefer[action + "With"](this === deferred ? newDefer : this, [returned]);
+                                        }
+                                    } :
+                                    //传进来的不是函数
+                                    //则默认调用[resolve | reject | notify]派发事件出去
+                                    newDefer[action]
+                                );
+                            });
+                            //这里的fns已经没用了，有用的fn引用已经被记录了
+                            //退出前手工设置null避免闭包造成的内存占用
+                            fns = null;
+                        }).promise();
+                    },
+                    // 在这里obj绑定了[resolve | reject | notify]这些方法
+                    promise: function (obj) {
+                        return obj != null ? linQuery.extend(obj, promise) : promise;
+                    }
+                };
+
+            // 这句是为了兼容旧版
+            promise.pipe = promise.then;
+
+            linQuery.each(tuples, function (i, tuple) {
+                var list = tuple[2], // 对应的队列
+                    stateString = tuple[3]; // 执行之后对应的状态
+
+                // 其实done|fail|progress底层就是使用callbacks的add方法去添加列表
+                promise[tuple[1]] = list.add;
+
+                // 处理中是没有最后状态的
+                if (stateString) {
+                    list.add(
+                        // 修改最终状态
+                        function () {
+                            state = stateString;
+                        },
+                        // 禁用对立的那条队列
+                        // 注意 0^1 = 1   1^1 = 0
+                        // 即是成功的时候，把失败那条队列禁用
+                        // 即是成功的时候，把成功那条队列禁用
+                        // [ reject_list | resolve_list ].disable; progress_list.lock
+                        tuples[i ^ 1][2].disable,
+
+                        // 锁住当前队列状态
+                        tuples[2][2].lock);
+                }
+
+                // deferred[ resolve | reject | notify ] = list.fire
+                // tuple[0] == resolve | reject | notify 
+                // 可以看到 resolve|reject|notify其实就是Callbacks里边的fire方法
+                // 而resolveWith|rejectWith|notifyWith其实就是Callbacks里边的fireWith方法
+                deferred[tuple[0]] = list.fire;
+                deferred[tuple[0] + "With"] = list.fireWith;
+            });
+
+            // 扩展deferred的then | done | fail | progress等方法
+            promise.promise(deferred);
+
+            // 如果传入func，则把执行上下文和参数设置为当前生成的deferred实例
+            if (func) {
+                func.call(deferred, deferred);
+            }
+
+            return deferred;
+        },
+        // 当一个任务失败时，代表整个都失败了
+        // 任务是Deferred时，成为异步任务
+        // 任务是function是，成为同步任务
+        when: function (subordinate) {
+            var i = 0,
+                resolveValues = core_slice.call(arguments),
+                length = resolveValues.length,
+
+                // 还没完成的异步任务数
+                remaining = length !== 1 || (subordinate && linQuery.isFunction(subordinate.promise)) ? length : 0,
+
+                // 只有一个异步任务的时候,直接返回subordinate，否则创建一个新的Deferred对象返回
+                deferred = remaining === 1 ? subordinate : linQuery.Deferred(),
+
+                // 用于更新 成功|处理 中两个状态
+                // 不考虑失败状态因为： 当一个任务失败后，代表整个都失败了
+                updateFunc = function (i, contexts, values) {
+                    return function (value) {
+                        contexts[i] = this;
+                        values[i] = arguments.length > 1 ? core_slice.call(arguments) : value;
+                        if (values === progressValues) { // 处理中，派发正在处理事件
+                            deferred.notifyWith(contexts, value);
+                        } else if (!(--remaining)) { // 成功，并且剩余的异步任务为0
+                            deferred.resolveWith(contexts, values);
+                        }
+                    }
+                },
+
+                progressValues, progressContexts, resolveContexts;
+
+            //如果只有一个任务，可以不用做维护状态的处理了
+            //只有大于1个任务才需要维护任务的状态
+            if (length > 1) {
+                progressValues = new Array(length);
+                progressContexts = new Array(length);
+                //事件包含的上下文是当前任务前边的所有任务的一个集合，逐步更新
+                resolveContexts = new Array(length);
+                for (; i < length; i++) {
+                    if (resolveValues[i] && linQuery.isFunction(resolveValues[i].promise)) {
+                        //如果是异步任务
+
+                        resolveValues[i].promise()
+
+                            //成功的时候不断更新自己的状态
+                            .done(updateFunc(i, resolveContexts, resolveValues))
+
+                            //当一个任务失败的时候，代表整个都失败了。直接派发一个失败即可
+                            .fail(deferred.reject)
+
+                            //正在处理的时候也要不断更新自己的状态
+                            .progress(updateFunc(i, progressContexts, progressValues));
+                    } else {
+                        //如果是同步任务，则remain不应该计它在内
+                        --remaining;
+                    }
+                }
+            }
+            //传进来的任务都是同步任务
+            if (!remaining) {
+                deferred.resolveWith(resolveContexts, resolveValues);
+            }
+
+            return deferred.promise();
+        }
+    });
+
+
+
 
     // 填充 class2type 映射
     linQuery.each("Boolean Number String Function Array Date RegExp Object".split(" "), function (i, name) {
@@ -399,5 +603,3 @@
 // 无new构建测试
 // var a = $("lin");
 // a.logName();
-
-
